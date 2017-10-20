@@ -1,7 +1,7 @@
 package com.tapad.aerospike
 
 import com.aerospike.client.async.{MaxCommandAction, AsyncClientPolicy}
-import com.aerospike.client.policy.{WritePolicy, QueryPolicy}
+import com.aerospike.client.policy.{BatchPolicy, Policy, WritePolicy, QueryPolicy}
 import java.util.concurrent.ExecutorService
 
 /**
@@ -31,9 +31,25 @@ object ClientSettings {
 
 
 case class ReadSettings(timeout: Int = 0, maxRetries: Int = 2, sleepBetweenRetries: Int = 500, maxConcurrentNodes: Int = 0) {
+  private[aerospike] def buildReadPolicy() = {
+    val p = new Policy()
+    p.setTimeout(timeout)
+    p.maxRetries          = maxRetries
+    p.sleepBetweenRetries = sleepBetweenRetries
+    p
+  }
+
+  private[aerospike] def buildBatchPolicy() = {
+    val p = new BatchPolicy()
+    p.setTimeout(timeout)
+    p.maxRetries          = maxRetries
+    p.sleepBetweenRetries = sleepBetweenRetries
+    p
+  }
+
   private[aerospike] def buildQueryPolicy() = {
     val p = new QueryPolicy()
-    p.timeout             = timeout
+    p.setTimeout(timeout)
     p.maxRetries          = maxRetries
     p.sleepBetweenRetries = sleepBetweenRetries
     p.maxConcurrentNodes  = maxConcurrentNodes
@@ -45,14 +61,16 @@ object ReadSettings {
   val Default = ReadSettings()
 }
 
-case class WriteSettings(expiration: Int = 0, timeout: Int = 0, maxRetries: Int = 2, sleepBetweenRetries: Int = 500) {
+case class WriteSettings(expiration: Int = 0, timeout: Int = 0, maxRetries: Int = 2, sleepBetweenRetries: Int = 500, sendKey: Boolean = false) {
   private[aerospike] def buildWritePolicy() = {
-    val p = new WritePolicy()
-    p.expiration = expiration
-    p.timeout = timeout
-    p.maxRetries = maxRetries
-    p.sleepBetweenRetries = sleepBetweenRetries
-    p
+    val p = new Policy()
+    p.sendKey = sendKey
+    val wp = new WritePolicy(p)
+    wp.expiration = expiration
+    wp.setTimeout(timeout)
+    wp.maxRetries = maxRetries
+    wp.sleepBetweenRetries = sleepBetweenRetries
+    wp
   }
 }
 

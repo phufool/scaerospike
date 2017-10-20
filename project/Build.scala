@@ -14,7 +14,7 @@ object Scaerospike extends Build {
       	organization := "com.tapad.scaerospike"
       ) ++ Seq(libraryDependencies ++=
         Seq(
-          "com.aerospike" % "aerospike-client" % "3.0.30",
+          "com.aerospike" % "aerospike-client" % "4.0.8",
           "io.netty" % "netty-buffer" % "4.0.23.Final",
           "org.scalatest" %% "scalatest" % "2.2.6"  % "test"
         )

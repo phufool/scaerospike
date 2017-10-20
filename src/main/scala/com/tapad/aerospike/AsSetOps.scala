@@ -1,12 +1,14 @@
 package com.tapad.aerospike
 
+import java.util.concurrent.atomic.AtomicReference
+
 import com.aerospike.client.async.AsyncClient
-import com.aerospike.client.listener.{DeleteListener, WriteListener, RecordListener, RecordArrayListener}
+import com.aerospike.client.listener._
 import com.aerospike.client._
-import com.aerospike.client.policy.QueryPolicy
+import com.aerospike.client.policy.{Policy, BatchPolicy, QueryPolicy}
+import com.aerospike.client.query.{Statement, RecordSet}
 
 import scala.concurrent.{Promise, ExecutionContext, Future}
-import com.aerospike.client.{AerospikeException, Key}
 import scala.collection.JavaConverters._
 import scala.collection.breakOut
 
@@ -47,10 +49,15 @@ trait AsSetOps[K, V] {
    */
   def putBins(key: K, values: Map[String, V], customTtl: Option[Int] = None) : Future[Unit]
 
-    /**
+  /**
    * Delete a key.
    */
   def delete(key: K, bin: String = "") : Future[Unit]
+
+  /**
+   * Executes a query statement
+   */
+  def query(statement: Statement): Future[Map[K, Record]]
 }
 
 /**
@@ -63,6 +70,8 @@ private[aerospike] class AsSet[K, V](private final val client: AsyncClient,
                                      writeSettings: WriteSettings)
                                     (implicit keyGen: KeyGenerator[K], valueMapping: ValueMapping[V], executionContext: ExecutionContext) extends AsSetOps[K, V] {
 
+  private final val batchPolicy = readSettings.buildBatchPolicy()
+  private final val readPolicy = readSettings.buildReadPolicy()
   private final val queryPolicy = readSettings.buildQueryPolicy()
   private final val writePolicy = writeSettings.buildWritePolicy()
 
@@ -87,7 +96,7 @@ private[aerospike] class AsSet[K, V](private final val client: AsyncClient,
     }
   }
 
-  private[aerospike] def query[R](policy: QueryPolicy,
+  private[aerospike] def query[R](policy: Policy,
                                   key: Key,
                                   bins: Seq[String] = Seq.empty, extract: Record => R): Future[R] = {
     val result = Promise[R]()
@@ -105,7 +114,7 @@ private[aerospike] class AsSet[K, V](private final val client: AsyncClient,
     result.future
   }
 
-  private[aerospike] def multiQuery[T](policy: QueryPolicy,
+  private[aerospike] def multiQuery[T](policy: BatchPolicy,
                                        keys: Seq[Key],
                                        bins: Seq[String],
                                        extract: Record => T): Future[Map[K, T]] = {
@@ -134,19 +143,19 @@ private[aerospike] class AsSet[K, V](private final val client: AsyncClient,
   }
 
   def get(key: K, bin: String = ""): Future[Option[V]] = {
-    query(queryPolicy, genKey(key), bins = Seq(bin), extractSingleBin(bin, _))
+    query(readPolicy, genKey(key), bins = Seq(bin), extractSingleBin(bin, _))
   }
 
   def getBins(key: K, bins: Seq[String]): Future[Map[String, V]] = {
-    query(queryPolicy, genKey(key), bins = bins, extractMultiBin)
+    query(readPolicy, genKey(key), bins = bins, extractMultiBin)
   }
 
   def multiGet(keys: Seq[K], bin: String = ""): Future[Map[K, Option[V]]] = {
-    multiQuery(queryPolicy, keys.map(genKey), bins = Seq(bin), extractSingleBin(bin, _))
+    multiQuery(batchPolicy, keys.map(genKey), bins = Seq(bin), extractSingleBin(bin, _))
   }
 
   def multiGetBins(keys: Seq[K], bins: Seq[String]): Future[Map[K, Map[String, V]]] = {
-    multiQuery(queryPolicy, keys.map(genKey), bins, extractMultiBin)
+    multiQuery(batchPolicy, keys.map(genKey), bins, extractMultiBin)
   }
 
   def put(key: K, value: V, bin: String = "", customTtl: Option[Int] = None): Future[Unit] = {
@@ -189,6 +198,30 @@ private[aerospike] class AsSet[K, V](private final val client: AsyncClient,
         }
       }
       client.delete(writePolicy, listener, genKey(key))
+    } catch {
+      case e: Exception => result.failure(e)
+    }
+    result.future
+  }
+
+  def query(statement: Statement): Future[Map[K, Record]] = {
+    val result = Promise[Map[K, Record]]()
+    val records = scala.collection.mutable.Map[K, Record]()
+    val listener = new RecordSequenceListener {
+      def onRecord(key: Key, record: Record): Unit = {
+        records += (key.userKey.getObject.asInstanceOf[K] -> record)
+      }
+
+      def onSuccess() {
+        result.success(records.toMap)
+      }
+
+      def onFailure(exception: AerospikeException) {
+        result.failure(exception)
+      }
+    }
+    try {
+      client.query(queryPolicy, listener, statement)
     } catch {
       case e: Exception => result.failure(e)
     }
